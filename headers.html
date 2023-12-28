@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HTTP Headers</title>
+</head>
+<body>
+    <h1>HTTP Headers</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Header</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for header, value in headers_list %}
+                <tr>
+                    <td>{{ header }}</td>
+                    <td>{{ value }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <h2>Last 10 Log Entries</h2>
+    <ul>
+        {% for line in log_lines %}
+            <li>{{ line }}</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
