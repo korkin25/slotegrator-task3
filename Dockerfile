@@ -1,4 +1,4 @@
-FROM ghcr.io/slotegrator-task3-base-image:latest
+FROM ghcr.io/korkin25/slotegrator-task3-base-image:latest
 
 WORKDIR /app
 RUN mkdir logs
