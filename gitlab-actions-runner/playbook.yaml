@@ -1,0 +1,24 @@
+---
+- hosts: all
+  become: yes
+  roles:
+    - monolithprojects.github_actions_runner
+
+  vars:
+    runner_user: "{{ lookup('env', 'USER') }}"
+    runner_dir: /opt/actions-runner
+    runner_version: "v2.311.0"
+    runner_state: "started"
+    reinstall_runner: no
+    hide_sensitive_logs: yes
+    runner_org: no
+    runner_labels: [home]
+    runner_group: ""
+    runner_download_repository: "actions/runner"
+    runner_extra_config_args: ""
+    runner_name: "{{ ansible_facts.hostname }}"
+    github_account: "{{ lookup('env', 'GITHUB_ACCOUNT') }}"
+    github_owner: "{{ lookup('env', 'GITHUB_OWNER') }}"
+    github_repo: "{{ lookup('env', 'GITHUB_REPO') }}"
+    github_enterprise: "{{ lookup('env', 'GITHUB_ENTERPRISE') }}",
+    access_token: "{{ lookup('env', 'GITHUB_TOKEN') }}
