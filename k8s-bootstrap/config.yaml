@@ -1,20 +1,64 @@
-virtual_machines:
-  - name: "master-node"
-    role: "kubernetes-master"
-    cpu: 4
-    memory: 4096
-    disk_size: "40GB"
-  - name: "worker-node-1"
-    role: "kubernetes-worker"
-    cpu: 2
-    memory: 2048
-    disk_size: "20GB"
-  - name: "worker-node-2"
-    role: "kubernetes-worker"
-    cpu: 2
-    memory: 2048
-    disk_size: "20GB"
+ssh_key: "/path/to/ssh_public_key.pub"
 
-kubernetes_config:
-  version: "1.21"
-  network_plugin: "calico"
+virtual_machines_config:
+  global:
+    # Define the required providers for Terraform
+    required_providers:
+      virtualbox:
+        - version: "0.0.4"
+        - source: "hashicorp/virtualbox"
+
+  virtual_machines:
+    # Master node configuration for Kubernetes (k0s)
+    - master:
+        prefix: "k8s-master"
+        count: 1
+        role: "master"
+        image: "/home/kk573/Downloads/vagrant.box"
+        cpus: 2
+        memory: "2048"
+        network_adapters:
+          - eth0:
+              type: "nat"
+              device: "IntelPro1000MTDesktop"
+        additional_disks:
+          - master_disk:
+              size: "20GB"
+              type: "SSD"
+              mountpoint: "/mnt/master_disk"
+
+    # Worker node configuration for Kubernetes (k0s)
+    - worker:
+        prefix: "k8s-worker"
+        count: 1
+        role: "worker"
+        image: "/home/kk573/Downloads/vagrant.box"
+        cpus: 2
+        memory: "2048"
+        network_adapters:
+          - eth0:
+              type: "nat"
+              device: "IntelPro1000MTDesktop"
+        additional_disks:
+          - name: "worker_disk"
+            size: "20GB"
+            type: "SSD"
+            mountpoint: "/mnt/worker_disk"
+
+    # ETCD nodes configuration for Kubernetes (k0s)
+    - etcd:
+        prefix: "k8s-etcd"
+        count: 3
+        role: "etcd"
+        image: "/home/kk573/Downloads/vagrant.box"
+        cpus: 1
+        memory: "1024"
+        network_adapters:
+          - eth0:
+              type: "nat"
+              device: "IntelPro1000MTDesktop"
+        additional_disks:
+          - name: "etcd_data"
+            size: "10GB"
+            type: "HDD"
+            mountpoint: "/etcd_data"
