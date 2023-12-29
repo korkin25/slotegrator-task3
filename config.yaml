@@ -1,4 +1,5 @@
-template_dir: /home/kk573/work/github/slotegrator-task3
+template_dir: /app/templates
 port: 5000
 logs: logs.log
-log_file: /home/kk573/work/github/slotegrator-task3/access.log
+log_file: /app/logs/access.log
+```
