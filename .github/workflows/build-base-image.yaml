@@ -43,10 +43,10 @@ jobs:
             ghcr.io/${{ github.repository }}-base-image:${{ env.BASE_IMAGE_TAG }}
             ghcr.io/${{ github.repository }}-base-image:latest
 
-      - name: Save BASE_IMAGE_TAG to file
+      - name: Save BASE_IMAGE_TAG to base-image-tag.txt
         run: echo ${{ env.BASE_IMAGE_TAG }} > base-image-tag.txt
 
-      - name: Save BASE_IMAGE_TAG to cache
+      - name: Save base-image-tag.txt to cache
         uses: actions/cache@v2
         with:
           path: base-image-tag.txt

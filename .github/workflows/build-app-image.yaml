@@ -41,8 +41,8 @@ jobs:
             exit 1
           else
             echo "Cache was restored successfully."
-            BASE_IMAGE_TAG=$(cat base-image-tag.txt)
-            echo "BASE_IMAGE_TAG=$BASE_IMAGE_TAG" >> $GITHUB_ENV
+            BASE_IMAGE_TAG="$(cat base-image-tag.txt)"
+            echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}" >> $GITHUB_ENV
           fi
 
       - name: Set APP_IMAGE_TAG
