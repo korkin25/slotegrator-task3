@@ -7,7 +7,7 @@ RUN mkdir templates
 
 COPY app.py .
 COPY config.yaml config/
-COPY headers.yaml templates/
+COPY headers.html templates/
 
 EXPOSE 5000
 
