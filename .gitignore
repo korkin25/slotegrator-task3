@@ -2,3 +2,5 @@
 **/*.swp
 
 gitlab-actions-runner/.env
+k8s-bootstrap/main.tf
+
