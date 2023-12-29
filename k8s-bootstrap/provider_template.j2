@@ -1,0 +1,13 @@
+terraform {
+  required_providers {
+    {%- for provider, details in providers.items() %}
+      {{ provider }} = {
+        {%- for detail in details %}
+          {%- for key, value in detail.items() %}
+            {{ key }} = "{{ value }}"
+          {%- endfor %}
+        {%- endfor %}
+      }
+    {%- endfor %}
+  }
+}
