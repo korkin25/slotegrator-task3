@@ -38,6 +38,9 @@ jobs:
           if [ -z "${{ steps.restore-cache.outputs.path }}" ]; then
             echo "Cache was not restored. Stopping pipeline with an error."
             exit 1
+          else
+            echo "Cache was restored successfully."
+            export BASE_IMAGE_TAG=$(cat "${{ steps.restore-cache.outputs.path }}")
           fi
 
       - name: Set APP_IMAGE_TAG
