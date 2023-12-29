@@ -32,6 +32,15 @@ jobs:
       - name: Set base image docker tag
         run: echo "BASE_IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
+      - name: Cache pip files
+        id: cache-pip-files
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/pip
+          key: python-pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            python-pip-${{ runner.os }}-
+
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v2
         with:
@@ -48,3 +57,5 @@ jobs:
         with:
           path: ${{ runner.workspace }}
           key: ${{ runner.os }}-image-tag-${{ env.BASE_IMAGE_TAG }}
+          restore-keys: |
+            ${{ runner.os }}-image-tag-
