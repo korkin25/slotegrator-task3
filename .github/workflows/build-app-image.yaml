@@ -30,9 +30,9 @@ jobs:
         uses: actions/cache@v2
         with:
           path: ${{ runner.workspace }}
-          key: ${{ runner.os }}-base-image-tag-
+          key: base-image-tag-${{ runner.os }}-
           restore-keys: |
-            ${{ runner.os }}-base-image-tag-
+            base-image-tag-${{ runner.os }}-
 
       - name: Check if cache was restored
         run: |
