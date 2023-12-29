@@ -1,13 +1,13 @@
 name: Build and Push Docker Base Image
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
     paths:
       - 'Dockerfile.base'
       - 'requirements.txt'
-      - '.github/workflows/build-base-image.yml'
 
 jobs:
   build-and-push:
