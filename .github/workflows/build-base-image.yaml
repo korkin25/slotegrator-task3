@@ -25,18 +25,6 @@ jobs:
         run: |
           echo "BASE_IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      - name: Cache pip files
-        id: cache-pip-files
-        uses: actions/cache@v2
-        with:
-          path: ~/.cache/pip
-          key: python-pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            python-pip-${{ runner.os }}-
-
-      - name: Write Docker Base Image URL to .env
-        run: echo "BASE_DOCKER_IMAGE_URL=ghcr.io/${{ github.repository }}-base-image:${{ env.BASE_IMAGE_TAG }}" >> .env
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v1
         with:
