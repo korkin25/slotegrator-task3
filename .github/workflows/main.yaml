@@ -41,5 +41,4 @@ jobs:
         file: Dockerfile
         push: true
         tags: |
-          ghcr.io/${{ github.repository }}:${{ env.SHORT_SHA }}
           ghcr.io/${{ github.repository }}:latest
