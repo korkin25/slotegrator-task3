@@ -1,0 +1,20 @@
+virtual_machines:
+  - name: "master-node"
+    role: "kubernetes-master"
+    cpu: 4
+    memory: 4096
+    disk_size: "40GB"
+  - name: "worker-node-1"
+    role: "kubernetes-worker"
+    cpu: 2
+    memory: 2048
+    disk_size: "20GB"
+  - name: "worker-node-2"
+    role: "kubernetes-worker"
+    cpu: 2
+    memory: 2048
+    disk_size: "20GB"
+
+kubernetes_config:
+  version: "1.21"
+  network_plugin: "calico"
