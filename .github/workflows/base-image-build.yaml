@@ -3,7 +3,7 @@ name: Build and Push Docker Base Image
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - 'Dockerfile.base'
       - 'requirements.txt'
@@ -36,4 +36,6 @@ jobs:
         context: .
         file: Dockerfile.base
         push: true
-        tags: ghcr.io/${{ github.repository }}-base-image:${{ env.SHORT_SHA }}
+        tags: |
+          ghcr.io/${{ github.repository }}-base-image:${{ env.SHORT_SHA }}
+          ghcr.io/${{ github.repository }}-base-image:latest
