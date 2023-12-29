@@ -1,3 +1,4 @@
+# FILEPATH: /home/kk573/work/github/slotegrator-task3/.github/workflows/build-app-image.yaml
 name: Build app image
 
 on:
@@ -35,12 +36,13 @@ jobs:
 
       - name: Check if cache was restored
         run: |
-          if [ -z "${{ steps.restore-cache.outputs.path }}" ]; then
+          if [ "${{ steps.restore-cache.outputs.cache-hit }}" != 'true' ]; then
             echo "Cache was not restored. Stopping pipeline with an error."
             exit 1
           else
             echo "Cache was restored successfully."
-            echo "BASE_IMAGE_TAG=$(cat "${{ steps.restore-cache.outputs.path }}")" >> $GITHUB_ENV
+            BASE_IMAGE_TAG=$(cat base-image-tag.txt)
+            echo "BASE_IMAGE_TAG=$BASE_IMAGE_TAG" >> $GITHUB_ENV
           fi
 
       - name: Set APP_IMAGE_TAG
