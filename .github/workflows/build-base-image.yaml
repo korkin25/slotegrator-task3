@@ -1,7 +1,6 @@
 name: Build and Push Docker Base Image
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - master
@@ -9,6 +8,7 @@ on:
       - 'Dockerfile.base'
       - 'requirements.txt'
       - '.github/workflows/build-base-image.yml'
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -41,11 +41,11 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}-base-image:${{ env.BASE_IMAGE_TAG }}
             ghcr.io/${{ github.repository }}-base-image:latest
-    
+
       - name: Save BASE_IMAGE_TAG to cache
         uses: actions/cache@v2
         with:
           path: .env
-          key: base-image-tag-${{ runner.os }}-${{ env.BASE_IMAGE_TAG }}}
+          key: base-image-tag-${{ runner.os }}-${{ env.BASE_IMAGE_TAG }}
           restore-keys: |
             base-image-tag-${{ runner.os }}-

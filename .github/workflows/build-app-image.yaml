@@ -1,15 +1,10 @@
-name: Build фpp image
+name: Build app image
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - master
-    paths:
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - 'app.py'
-      - 'headers.html'
+  pull_request:
 
 jobs:
   build-and-push:
@@ -34,24 +29,19 @@ jobs:
         uses: actions/cache@v2
         with:
           path: ${{ runner.workspace }}
-          key: ${{ runner.os }}-base-image-tag-${{ github.sha }}
+          key: ${{ runner.os }}-base-image-tag-
           restore-keys: |
             ${{ runner.os }}-base-image-tag-
 
-      - name: Set base image docker tag
-        run: echo "BASE_IMAGE_TAG=${{ steps.restore-cache.outputs.cache-hit }}" >> $GITHUB_ENV
-
       - name: Check if cache was restored
         run: |
-          if [ -z "${{ steps.restore-cache.outputs.cache-hit }}" ]; then
+          if [ -z "${{ steps.restore-cache.outputs.path }}" ]; then
             echo "Cache was not restored. Stopping pipeline with an error."
             exit 1
           fi
 
       - name: Set APP_IMAGE_TAG
-        id: set-app-image-tag
-        run: |
-          echo "APP_IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        run: echo "APP_IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
 
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v2
