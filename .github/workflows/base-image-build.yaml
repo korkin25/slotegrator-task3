@@ -34,7 +34,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: DEBUG Check docker tag
-      run: echo ghcr.io/${{ github.repository }}-base-image:${{ env.SHORT_SHA }}
+      run: echo "ghcr.io/${{ github.repository }}-base-image:${{ env.SHORT_SHA }}
 
     - name: Build and Push Docker Image
       uses: docker/build-push-action@v2
