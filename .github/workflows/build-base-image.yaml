@@ -1,3 +1,4 @@
+# FILEPATH: /home/kk573/work/github/slotegrator-task3/.github/workflows/build-base-image.yaml
 name: Build and Push Docker Base Image
 
 on:
@@ -27,6 +28,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set BASE_IMAGE_TAG
+        id: short-sha
+        run: |
+          echo "BASE_IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV                  
+
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v2
         with:
@@ -34,15 +40,16 @@ jobs:
           file: Dockerfile.base
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}-base-image:$(git rev-parse --short HEAD)
+            ghcr.io/${{ github.repository }}-base-image:${{ env.BASE_IMAGE_TAG }}
             ghcr.io/${{ github.repository }}-base-image:latest
 
       - name: Save BASE_IMAGE_TAG to file
-        run: echo $(git rev-parse --short HEAD) > base-image-tag.txt
+        run: echo ${{ env.BASE_IMAGE_TAG }} > base-image-tag.txt
 
-      - name: Save base-image-tag.txt to cache
+      - name: Save BASE_IMAGE_TAG to cache
         uses: actions/cache@v2
         with:
           path: base-image-tag.txt
           key: base-image-tag
           restore-keys: base-image-tag
+
