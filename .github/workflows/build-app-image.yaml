@@ -1,4 +1,4 @@
-name: Build main app image
+name: Build фpp image
 
 on:
   workflow_dispatch:
@@ -29,33 +29,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set base image docker tag
-        run: echo "BASE_IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-
-      - name: Cache pip files
-        id: cache-pip-files
+      - name: Restore BASE_IMAGE_TAG from cache
+        id: restore-cache
         uses: actions/cache@v2
         with:
-          path: ~/.cache/pip
-          key: python-pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          path: ${{ runner.workspace }}
+          key: ${{ runner.os }}-base-image-tag-${{ github.sha }}
           restore-keys: |
-            python-pip-${{ runner.os }}-
+            ${{ runner.os }}-base-image-tag-
+
+      - name: Set base image docker tag
+        run: echo "BASE_IMAGE_TAG=${{ steps.restore-cache.outputs.cache-hit }}" >> $GITHUB_ENV
+
+      - name: Check if cache was restored
+        run: |
+          if [ -z "${{ steps.restore-cache.outputs.cache-hit }}" ]; then
+            echo "Cache was not restored. Stopping pipeline with an error."
+            exit 1
+          fi
+
+      - name: Set APP_IMAGE_TAG
+        id: set-app-image-tag
+        run: |
+          echo "APP_IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v2
         with:
-          context: .
+          context: ${{ github.workspace }}
           file: Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}-app:${{ env.BASE_IMAGE_TAG }}
+            ghcr.io/${{ github.repository }}-app:${{ env.APP_IMAGE_TAG }}
             ghcr.io/${{ github.repository }}-app:latest
+          build-args: |
+            BASE_IMAGE_TAG=${{ env.BASE_IMAGE_TAG }}
 
       - name: Save BASE_IMAGE_TAG to cache
         id: save-cache
         uses: actions/cache@v2
         with:
           path: ${{ runner.workspace }}
-          key: ${{ runner.os }}-image-tag-${{ env.BASE_IMAGE_TAG }}
+          key: ${{ runner.os }}-base-image-tag-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-image-tag-
+            ${{ runner.os }}-base-image-tag-
