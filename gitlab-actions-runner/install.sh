@@ -1,5 +1,7 @@
 #!/bin/sh
 
-ansible-galaxy role install MonolithProjects.github_actions_runner
+. ./.env
 
-ansible-playbook -i inventory.yaml playbook.yml
+env | grep GITHUB
+ansible-galaxy install monolithprojects.github_actions_runner
+ansible-playbook -i inventory.yml playbook.yml "$@"
