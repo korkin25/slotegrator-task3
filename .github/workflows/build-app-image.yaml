@@ -40,7 +40,7 @@ jobs:
             exit 1
           else
             echo "Cache was restored successfully."
-            export BASE_IMAGE_TAG=$(cat "${{ steps.restore-cache.outputs.path }}")
+            echo "BASE_IMAGE_TAG=$(cat "${{ steps.restore-cache.outputs.path }}")" >> $GITHUB_ENV
           fi
 
       - name: Set APP_IMAGE_TAG
