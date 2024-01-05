@@ -1,6 +1,9 @@
 *.log
 **/*.swp
-
+**//.vscode/*
+**/.terraform
+**/.terraform.lock.hcl
+**/terraform.tfstate
 gitlab-actions-runner/.env
 k8s-bootstrap/main.tf
 
