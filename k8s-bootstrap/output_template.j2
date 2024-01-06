@@ -1,7 +1,0 @@
-{% for vm in vms %}
-{% for i in range(vm.get('count',1)) %}
-output "{{ vm }}-{{ i+1 }}_ip" {
-  value = virtualbox_vm.{{ vm }}-{{ i+1 }}.network_adapter.0.ipv4_address
-}
-{% endfor %}
-{% endfor %}
