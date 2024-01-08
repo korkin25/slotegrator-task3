@@ -1,0 +1,11 @@
+{
+    "emeraldwalk.runonsave": {
+        "commands": [
+            {
+                "match": "vm_lxd\\.j2|config-lxd\\.yaml",
+                "cmd": "python ${workspaceFolder}/yaml2terraform.py ${workspaceFolder}/config-lxd.yaml"
+            }
+        ]
+    }
+}
+

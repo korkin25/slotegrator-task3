@@ -1,0 +1,173 @@
+# Provider Configuration Section
+terraform {
+  required_providers {
+    lxd = {
+      source  = "{{ config.virtual_machines_config.global.provider_info.source | default('">= 1.10.4"') }}"
+      version = "{{ config.virtual_machines_config.global.provider_info.version | default('"terraform-lxd/lxd"') }}"      
+    }
+  }
+}
+
+# LXD Profile Configuration
+{%- if config.lxc_profiles is defined and config.lxc_profiles | count > 0 %}
+
+  {%- for profile_name, profile in config.lxc_profiles.items() %}
+resource "lxd_profile" "{{ profile_name }}" {
+  name        = "{{ profile_name }}"
+  description = "{{ profile_name }} profile"
+
+  {%- if profile.config is defined and profile.config | count > 0 %}
+  config = {
+    {%- for line in profile.config.split('\n') %}
+    {%- if ':' in line %}
+    {%- set key_value = line.split(':') %}
+    "{{ key_value[0].strip() }}" = {{ key_value[1].strip() }}
+    {%- endif %}
+    {%- endfor %}    
+  }
+  {%- endif %}
+}
+  {%- endfor %}
+{%- else %}
+  No LXC profiles defined
+{%- endif %}
+
+# LXD Storage Pool Configuration
+resource "lxd_storage_pool" "main_pool" {
+  name   = "{{ config.storage_pool.name }}"
+  driver = "{{ config.storage_pool.driver }}"
+  
+  # Adding configuration settings for the storage pool
+  config = {
+    source = "{{ config.storage_pool.config.source }}"
+  }
+}
+
+# LXD Storage Volumes Configuration
+
+{%- set vm_all_volumes = dict() %}
+
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    
+    {%- set vm_config = vm_details.vm_configuration %}
+
+    {%- for vm_instance in range(vm_details.count) %}
+
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+
+      {%- if vm_all_volumes.update({vm_name: vm_all_volumes.get(vm_name, [])}) %}{% endif %}
+
+        {%- for volume_name, volume_config in vm_config['additional_volumes'].items() %}
+
+          {%- set vm_volume_name_full = vm_name ~ '-' ~ volume_name %}
+
+          {%- if vm_all_volumes[vm_name].append(vm_volume_name_full) %}{% endif %}
+
+resource "lxd_volume" "{{ vm_volume_name_full }}" {
+  pool = "{{ config.storage_pool.name }}"
+  name = "{{ vm_volume_name_full }}"
+
+  depends_on = [
+    lxd_storage_pool.main_pool
+  ]
+
+  {%- if volume_config.size is defined and config.storage_pool.driver != "dir" %}
+  size = "{{ volume_config.size }}"
+  type = "{{ volume_config.type }}"
+  {%- endif %}
+}
+        {%- endfor %}
+
+    {%- endfor %}
+
+  {%- endfor %}
+
+{%- endfor %}
+
+#debug vm_all_volumes: {{ vm_all_volumes | json_pretty_print | comment_multiline }}
+
+# Virtual Machine Configuration
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    {%- set vm_config = vm_details.vm_configuration %}
+    {%- for vm_instance in range(vm_details.count) %}
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+
+      {# vm_name: {{ vm_name }}
+      # vm_config: 
+      {{ vm_config | json_pretty_print | comment_multiline| indent(6) }} #}
+
+      resource "lxd_instance" "{{ vm_name }}" {
+        count    = 1
+        name     = "{{ vm_name }}"
+        image    = "{{ vm_config['image'] }}"
+        profiles = ["{{ vm_config['profiles'] | join('", "') }}"]
+        type     = "{{ vm_config['type'] | default('virtual-machine') }}"
+
+         depends_on = [
+
+          {%- for profile in vm_config['profiles'] %}
+            {%- if profile != 'default' %}
+          lxd_profile.{{ profile }},
+            {%- endif %}
+          {%- endfor %}
+                    {%- for volume_name in vm_all_volumes[vm_name] %}
+          lxd_volume.{{ volume_name }},
+          {%- endfor %}
+          lxd_storage_pool.main_pool
+        ]
+
+        {%- if vm_config.config | count > 0 or config.cloud_init_config is defined %}
+        config = {
+          {%- for key in vm_config.config.keys() %}
+          "{{ key }}" = "{{ vm_config.config[key] }}"
+          {%- endfor %}
+
+          {%- if config.cloud_init_config is defined %}
+          "user.user-data" = <<-EOF
+            {{ config.cloud_init_config | indent(12)}}
+          EOF
+          {%- endif %}
+        }
+        {%- endif %}
+
+        limits = {
+          cpu    = {{ vm_config['cpus']   | default(1) }}
+          memory = "{{ vm_config['memory'] | default(1024) }}"
+        }
+
+        # Network device configuration
+        {%- for adapter_name, adapter in vm_config['network_adapters'].items() %}
+        device {
+          name       = "{{ adapter_name }}"
+          type       = "{{ adapter['type'] }}"
+          properties = {
+            nictype = "{{ adapter['nictype'] }}"
+            parent  = "{{ adapter['parent'] }}"
+          }
+        }
+        {%- endfor %}
+
+        # Additional volumes (disk devices)
+        {%- for volume_name, volume in vm_config['additional_volumes'].items() %}
+        device {
+          name       = "{{ volume_name }}"
+          type       = "disk"
+          properties = {
+            {%- if volume_name == 'root' %}
+            path   = "{{ volume['path'] }}"
+            pool   = "{{ config.storage_pool.name }}"
+            {%- else %}
+            source = "{{ vm_name }}-{{ volume_name }}"
+            path   = "{{ volume['path'] }}"
+            pool   = "{{ config.storage_pool.name }}"
+            {%- endif %}
+          }
+        }
+        {%- endfor %}
+      }
+    {%- endfor %}
+  {%- endfor %}
+{%- endfor %}

@@ -1,0 +1,140 @@
+cloud_init_config: |
+    #cloud-config
+    package_update: true
+    package_upgrade: true
+    packages:
+      - curl
+      - wget
+      - openssh-server
+    ssh_authorized_keys:
+      - "${var.ssh_key}"
+    users:
+      - name: kk573
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        groups: users, admin
+        home: /home/kk573
+        shell: /bin/bash
+        lock_passwd: false
+        ssh-authorized-keys:
+          - "${var.ssh_key}"
+        ssh_pwauth: False
+
+# Common network adapters for LXD containers
+network_adapters: &network_adapters
+  eth0:
+    nictype: bridged
+    parent: lxdbr0
+    type: nic
+
+# Common settings for all LXD containers
+common_lxd_settings: &common_lxd_settings
+  image: "ubuntu:mantic"
+  #image: "images:ubuntu/23.10"
+  type: "virtual-machine"
+  profiles:
+    - kubernetes_profile
+  config:
+    boot.autostart: "true"
+
+# Define the storage pool information
+storage_pool: &storage_pool
+  name: "directory-pool"
+  driver: "dir"
+  config:
+    source: "/var/snap/lxd/common/lxd/storage-pools/directory-pool"
+
+# Common settings for master node's storage volumes
+master_storage_settings: &master_storage
+  root:
+    size: "10GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/"
+  data:
+    size: "1GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/master_data"
+
+# Common settings for worker node's storage volumes
+worker_storage_settings: &worker_storage
+  root:
+    size: "10GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/"
+  data:
+    size: "1GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/worker_data"
+
+# Common settings for ETCD node's storage volumes
+etcd_storage_settings: &etcd_storage
+  root:
+    size: "10GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/"
+  data:
+    size: "1GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/etcd_data"
+
+# LXC Profile Configuration
+lxc_profiles:
+  kubernetes_profile:
+    config: |
+      linux.kernel_modules: "ip_tables"
+      security.privileged: "true"
+  another_profile:
+    config: |
+      linux.kernel_modules: "ip_tables"
+      security.privileged: "true"
+
+# Unique VM Configurations
+master_vm_configuration: &master_vm_configuration
+  <<: *common_lxd_settings
+  network_adapters: *network_adapters
+  cpus: 1
+  memory: "2048MB"
+  additional_volumes: *master_storage
+
+worker_vm_configuration: &worker_vm_configuration
+  <<: *common_lxd_settings
+  network_adapters: *network_adapters
+  cpus: 1
+  memory: "2048MB"
+  additional_volumes: *worker_storage
+
+etcd_vm_configuration: &etcd_vm_configuration
+  <<: *common_lxd_settings
+  network_adapters: *network_adapters
+  cpus: 1
+  memory: "1024MB"
+  additional_volumes: *etcd_storage
+
+# Virtual Machines Configuration
+virtual_machines_config:
+  global:
+    required_provider: lxd
+    provider_info:
+      version: ">= 1.10.4"
+      source: "terraform-lxd/lxd"
+  virtual_machines:
+    - master:
+        count: 1
+        role: "master"
+        prefix: "k8s-master"
+        vm_configuration: *master_vm_configuration
+    - worker:
+        count: 1
+        role: "worker"
+        prefix: "k8s-worker"
+        vm_configuration: *worker_vm_configuration
+    - etcd:
+        count: 3
+        role: "etcd"
+        prefix: "k8s-etcd"
+        vm_configuration: *etcd_vm_configuration

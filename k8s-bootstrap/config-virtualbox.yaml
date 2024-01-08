@@ -1,0 +1,82 @@
+ssh_key: "/path/to/ssh_public_key.pub"
+
+# Общие сетевые настройки
+common_network_settings: &common_network
+  wlo1:
+    type: "nat"
+    device: "IntelPro1000MTDesktop"
+
+# Common settings for all virtual machines
+common_vm_settings: &common_vm_settings
+  image: "/home/kk573/work/github/slotegrator-task3/k8s-bootstrap/virtualbox.box"
+
+# Common settings for master node's storage volumes
+master_storage_settings: &master_storage
+  disk1:
+    size: "10GB"
+    type: "SSD"
+    mountpoint: "/mnt/master_disk"
+
+# Common settings for worker node's storage volumes
+worker_storage_settings: &worker_storage
+  disk1:
+    size: "20GB"
+    type: "SSD"
+    mountpoint: "/mnt/worker_disk"
+
+# Common settings for ETCD node's storage volumes
+etcd_storage_settings: &etcd_storage
+  disk1:
+    size: "1GB"
+    type: "HDD"
+    mountpoint: "/etcd_data"
+
+virtual_machines_config:
+  global:
+    required_provider: virtualbox
+    provider_info:
+      version: ">= 0.0.4"
+      source: "shekeriev/virtualbox"
+
+  virtual_machines:
+    - master:
+        <<: *common_vm_settings
+        network_adapters:
+          - wlo1: 
+              <<: *common_network.wlo1
+              ip: "192.168.56.10"
+              mask: "255.255.255.0"
+        prefix: "k8s-master"
+        count: 1
+        role: "master"
+        cpus: 1
+        memory: "2048"
+        additional_disks: *master_storage
+
+    - worker:
+        <<: *common_vm_settings
+        network_adapters:
+          - wlo1: 
+              <<: *common_network.wlo1
+              ip: "192.168.56.20"
+              mask: "255.255.255.0"
+        prefix: "k8s-worker"
+        count: 2
+        role: "worker"
+        cpus: 2
+        memory: "2048"
+        additional_disks: *worker_storage
+
+    - etcd:
+        <<: *common_vm_settings
+        network_adapters:
+          - wlo1: 
+              <<: *common_network.wlo1
+              ip: "192.168.56.30"
+              mask: "255.255.255.0"
+        prefix: "k8s-etcd"
+        count: 3
+        role: "etcd"
+        cpus: 2
+        memory: "1024"
+        additional_disks: *etcd_storage
