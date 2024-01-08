@@ -9,6 +9,7 @@
 **/terraform.tfvars.json
 **/*.tfvars
 **/*.box
+**/main.tf
 gitlab-actions-runner/.env
 k8s-bootstrap/main.tf
 
