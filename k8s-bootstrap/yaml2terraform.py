@@ -8,9 +8,23 @@ from collections.abc import Iterable, Hashable
 def generate_terraform_file(config, template_env, output_file='main.tf'):
     def json_pretty_print(value):
         return json.dumps(value, indent=4, sort_keys=True)
-    
+
     def comment_multiline(value):
         return '\n'.join([f'# {line}' for line in value.split('\n')])
+
+    def pretty_format_yaml(input_data):
+        if isinstance(input_data, str):
+            try:
+                data = yaml.safe_load(input_data)
+            except Exception as e:
+                raise ValueError(f"Error parsing YAML string: {e}")
+        else:
+            data = input_data
+
+        try:
+            return yaml.dump(data, default_flow_style=False, sort_keys=False, indent=2, allow_unicode=True)
+        except Exception as e:
+            raise ValueError(f"Error formatting YAML: {e}")
 
     with open(output_file, 'w') as file:
         # Getting the provider name to determine the template file name
@@ -26,6 +40,7 @@ def generate_terraform_file(config, template_env, output_file='main.tf'):
         # Rendering the config into the template and writing to the output file
         template_env.filters['json_pretty_print'] = json_pretty_print
         template_env.filters['comment_multiline'] = comment_multiline
+        template_env.filters['pretty_format_yaml'] = pretty_format_yaml
         rendered_config = template_env.get_template(template_file_name).render(config=config)
         file.write(rendered_config)
 

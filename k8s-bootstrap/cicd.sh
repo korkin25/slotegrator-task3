@@ -1,6 +1,6 @@
 #!/bin/sh
 
-#export TF_LOG=INFO
+export TF_LOG=DEBUG
 
 if ! python3 yaml2terraform.py; then
     echo "Error: yaml2terraform.py failed"
@@ -18,8 +18,9 @@ if ! terraform validate; then
 fi
 
 terraform refresh 
-terraform plan
-terraform apply -auto-approve 
+if ! terraform apply -auto-approve; then
+    echo "Error: terraform apply failed"
+    exit 1
+fi
 
-./tfstate_get_network.py
 

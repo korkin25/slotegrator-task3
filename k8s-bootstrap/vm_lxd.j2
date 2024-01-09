@@ -2,8 +2,12 @@
 terraform {
   required_providers {
     lxd = {
-      source  = "{{ config.virtual_machines_config.global.provider_info.source | default('">= 1.10.4"') }}"
-      version = "{{ config.virtual_machines_config.global.provider_info.version | default('"terraform-lxd/lxd"') }}"      
+      source  = "{{ config.virtual_machines_config.global.provider_info.source | default('>= 1.10.4') }}"
+      version = "{{ config.virtual_machines_config.global.provider_info.version | default('terraform-lxd/lxd') }}"
+    }
+    k0s = {
+      source  = "{{ config.kubernetes.global.provider_info.source | default('>= 0.2.2-rc1') }}"
+      version = "{{ config.kubernetes.global.provider_info.version | default('danielskowronski/k0s') }}"
     }
   }
 }
@@ -171,3 +175,114 @@ resource "lxd_volume" "{{ vm_volume_name_full }}" {
     {%- endfor %}
   {%- endfor %}
 {%- endfor %}
+
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    {%- set vm_config = vm_details.vm_configuration %}
+    {%- for vm_instance in range(vm_details.count) %}
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+
+output "{{ vm_name }}_ip" {
+  value = lxd_instance.{{ vm_name }}[0].ipv4_address
+}
+    {%- endfor %}
+  {%- endfor %}
+{%- endfor %}
+
+
+{%- set k8s_hosts = dict() %}
+
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    {%- set vm_config = vm_details.vm_configuration %}
+    {%- for vm_instance in range(vm_details.count) %}
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+        {%- if k8s_hosts.update({vm_name: vm_details.role}) %}{% endif %}
+    {%- endfor %}
+  {%- endfor %}
+{%- endfor %}
+
+#debug k8s_hosts: {{ k8s_hosts | json_pretty_print | comment_multiline| indent(2) }}
+
+locals {
+  k8s_host_roles = {
+    {%- for k8s_host in k8s_hosts.keys() %}
+    "{{ k8s_host }}" = "{{ k8s_hosts[k8s_host] }}"{{ "," if not loop.last}}
+    {%- endfor %}
+  }
+}
+
+locals {
+  ip4etchosts = [
+    {%- for k8s_host in k8s_hosts.keys() %}
+    lxd_instance.{{ k8s_host }}[0].ipv4_address{{ "," if not loop.last}}
+    {%- endfor %}
+  ]
+}
+
+locals {
+  hostnames4etchosts = [
+    {%- for k8s_host in k8s_hosts.keys() %}
+    "{{ k8s_host }}"{{ "," if not loop.last}}
+    {%- endfor %}
+  ]
+}
+
+resource "null_resource" "update_hosts" {
+  count = length(local.hostnames4etchosts) {# Assuming hostnames4etchosts is a list of server IP addresses #}
+
+  # Execute remote command to update /etc/hosts
+  provisioner "remote-exec" {
+    inline = [
+      "echo '${join("\n", formatlist("%s %s", local.ip4etchosts, local.hostnames4etchosts))}' | sudo tee -a /etc/hosts"
+    ]
+
+    connection {
+      type     = "ssh"
+      user     = "${var.deploy_user} "
+      host     = local.ip4etchosts[count.index]
+      private_key = file("~/.ssh/id_rsa")
+    }
+  }
+
+  provisioner "local-exec" {
+    command = "echo '${join("\n", formatlist("%s %s", local.ip4etchosts, local.hostnames4etchosts))}' | sudo tee -a /etc/hosts"
+  }
+
+  # Trigger to recreate the resource when IP addresses or hostnames change
+  triggers = {
+    always_run = "${join(",", local.ip4etchosts)}:${join(",", local.hostnames4etchosts)}"
+  }
+}
+
+{%- set k8s = config.kubernetes %}
+
+#debug k8s: {{ k8s | json_pretty_print | comment_multiline| indent(2) }}
+
+resource "k0s_cluster" "{{ k8s.k0s.name }}" {
+  name    = "{{ k8s.k0s.name }}"
+  version = "{{ k8s.k0s.version }}"
+  
+  {%- if k8s.k0s.config is defined %}
+  config = <<EOF
+    {{ k8s.k0s.config | pretty_format_yaml | indent(4)}}
+  EOF
+  {%- endif %}
+
+  hosts = [
+    {%- for k8s_host in k8s_hosts.keys() %}
+      {
+        role = "{{ k8s_hosts[k8s_host] }}"
+
+        ssh = {
+          address  = lxd_instance.{{ k8s_host }}[0].ipv4_address
+          port     = "${var.ssh_port}"
+          user     = "${var.deploy_user}"
+        }
+        uploadBinary = true
+      }{{ "," if not loop.last}}
+    {%- endfor %}
+  ]
+  
+
+}

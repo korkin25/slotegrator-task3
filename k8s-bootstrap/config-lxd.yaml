@@ -9,9 +9,9 @@ cloud_init_config: |
     ssh_authorized_keys:
       - "${var.ssh_key}"
     users:
-      - name: kk573
+      - name: "${var.deploy_user}"
         sudo: ALL=(ALL) NOPASSWD:ALL
-        groups: users, admin
+        groups: users, admin, root
         home: /home/kk573
         shell: /bin/bash
         lock_passwd: false
@@ -42,7 +42,7 @@ storage_pool: &storage_pool
   driver: "dir"
   config:
     source: "/var/snap/lxd/common/lxd/storage-pools/directory-pool"
-
+    
 # Common settings for master node's storage volumes
 master_storage_settings: &master_storage
   root:
@@ -88,10 +88,7 @@ lxc_profiles:
     config: |
       linux.kernel_modules: "ip_tables"
       security.privileged: "true"
-  another_profile:
-    config: |
-      linux.kernel_modules: "ip_tables"
-      security.privileged: "true"
+
 
 # Unique VM Configurations
 master_vm_configuration: &master_vm_configuration
@@ -125,16 +122,70 @@ virtual_machines_config:
   virtual_machines:
     - master:
         count: 1
-        role: "master"
+        role: "controller"   #Role of the host. One of controller, controller+worker, single, worker, none.
         prefix: "k8s-master"
         vm_configuration: *master_vm_configuration
     - worker:
         count: 1
-        role: "worker"
+        role: "worker"        #Role of the host. One of controller, controller+worker, single, worker, none.
         prefix: "k8s-worker"
         vm_configuration: *worker_vm_configuration
     - etcd:
-        count: 3
-        role: "etcd"
+        count: 1
+        role: "worker"          #Role of the host. One of controller, controller+worker, single, worker, none.
         prefix: "k8s-etcd"
         vm_configuration: *etcd_vm_configuration
+
+kubernetes:
+  global:
+    required_provider: k0s
+    provider_info:
+      source: "danielskowronski/k0s"
+      version: "0.2.2-rc1"
+  k0s:
+      version: "v1.28.4+k0s.0"
+      name: k0s-generated-cluster
+      config:
+        versionChannel: stable
+        dynamicConfig: false
+        config:
+          apiVersion: k0s.k0sproject.io/v1beta1
+          kind: Cluster
+          metadata:
+            name: k0s-generated-cluster-inline
+          spec:
+            api:
+              k0sApiPort: 9443
+              port: 6443
+            installConfig:
+              users:
+                etcdUser: etcd
+                kineUser: kube-apiserver
+                konnectivityUser: konnectivity-server
+                kubeAPIserverUser: kube-apiserver
+                kubeSchedulerUser: kube-scheduler
+            konnectivity:
+              adminPort: 8133
+              agentPort: 8132
+            network:
+              nodeLocalLoadBalancing:
+                enabled: true
+                type: haproxy
+              kubeProxy:
+                disabled: false
+                mode: iptables
+              kuberouter:
+                autoMTU: true
+                mtu: 0
+                peerRouterASNs: ""
+                peerRouterIPs: ""
+              podCIDR: 10.244.0.0/16
+              provider: kuberouter
+              serviceCIDR: 10.96.0.0/12
+            podSecurityPolicy:
+              defaultPolicy: 00-k0s-privileged
+            storage:
+              type: etcd
+            telemetry:
+              enabled: true
+
