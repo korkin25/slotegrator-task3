@@ -13,3 +13,5 @@
 gitlab-actions-runner/.env
 k8s-bootstrap/main.tf
 
+
+**/temp_ssh_key_*
