@@ -1,0 +1,55 @@
+# Provider Configuration Section
+terraform {
+  required_providers {
+    {{ config.virtual_machines_config.global.required_provider }} = {
+      {%- for key, value in config.virtual_machines_config.global.provider_info.items() %}
+      {{ key }} = "{{ value }}"
+      {%- endfor %}
+    }
+  }
+}
+
+# Virtual Machine Configuration Section
+{%- for vm_config in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_config.items() %}
+    {%- for i in range(vm_details.count) %}
+    {%- set vm_name = vm_details.prefix ~ "-" ~ (i+1) %}
+    resource "virtualbox_vm" "{{ vm_name }}" {
+      name   = "{{ vm_name }}"
+      image  = "{{ vm_details.image }}"
+      cpus   = {{ vm_details.cpus }}
+      memory = "{{ vm_details.memory }}"
+
+      {%- for adapter in vm_details.network_adapters %}
+        {%- for adapter_name, adapter_props in adapter.items() %}
+
+      network_adapter {
+        host_interface = "{{ adapter_name }}"
+
+        {%- for key, value in adapter_props.items() %}
+          {{ key }} = "{{ value }}"
+        {%- endfor %}
+      }
+        {%- endfor %}
+      {%- endfor %}
+
+      provisioner "file" {
+        source      = "{{ config.ssh_key }}"
+        destination = "~/.ssh/authorized_keys"
+      }
+    }
+    {% endfor %}
+  {%- endfor %}
+{% endfor %}
+
+# Output Configuration Section
+{% for vm_config in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_config.items() %}
+    {%- for i in range(vm_details.count) %}
+      {% set vm_name = vm_details.prefix ~ "-" ~ (i + 1) %}
+      output "{{ vm_name }}_ip" {
+        value = "virtualbox_vm.{{ vm_name }}.network_adapter.0.ipv4_address"
+      }
+    {%- endfor %}
+  {%- endfor %}
+{% endfor %}
