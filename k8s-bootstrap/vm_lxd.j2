@@ -1,0 +1,379 @@
+# Provider Configuration Section
+terraform {
+  required_providers {
+    lxd = {
+      source  = "{{ config.virtual_machines_config.global.provider_info.source | default('>= 1.10.4') }}"
+      version = "{{ config.virtual_machines_config.global.provider_info.version | default('terraform-lxd/lxd') }}"
+    }
+    k0s = {
+      source  = "{{ config.kubernetes.global.provider_info.source | default('>= 0.2.2-rc1') }}"
+      version = "{{ config.kubernetes.global.provider_info.version | default('danielskowronski/k0s') }}"
+    }
+    random = {
+      source = "hashicorp/random"
+      version = ">= 3.6.0"
+    }
+  }
+}
+
+#Creating temporary file to store the SSH private key
+
+resource "random_string" "ssh_private_key_temp" {
+  length  = 8  # Length of the random string
+  special = false
+  upper   = false
+  keepers = {
+    # This will ensure the random string is generated only when `keepers` value changes
+    "always_run" = "1"
+  }
+}
+
+# Creating a temporary file to store the SSH private key
+resource "local_file" "ssh_private_key" {
+  content  = var.ssh_key_private
+  filename = "${path.module}/temp_ssh_key_${random_string.ssh_private_key_temp.result}"
+  file_permission = "0600"
+}
+
+# Using null_resource to potentially perform other actions if needed
+resource "null_resource" "update_env" {
+  # This will only run if the dependencies (e.g., local_file.ssh_private_key) change
+  depends_on = [local_file.ssh_private_key]
+}
+
+output "ssh_key_private_path" {
+  value = local_file.ssh_private_key.filename
+}
+
+
+# LXD Profile Configuration
+{%- if config.lxc_profiles is defined and config.lxc_profiles | count > 0 %}
+
+  {%- for profile_name, profile in config.lxc_profiles.items() %}
+resource "lxd_profile" "{{ profile_name }}" {
+  name        = "{{ profile_name }}"
+  description = "{{ profile_name }} profile"
+
+  {%- if profile.config is defined and profile.config | count > 0 %}
+  config = {
+    {%- for line in profile.config.split('\n') %}
+    {%- if ':' in line %}
+    {%- set key_value = line.split(':') %}
+    "{{ key_value[0].strip() }}" = {{ key_value[1].strip() }}
+    {%- endif %}
+    {%- endfor %}    
+  }
+  {%- endif %}
+}
+  {%- endfor %}
+{%- else %}
+  No LXC profiles defined
+{%- endif %}
+
+# LXD Storage Pool Configuration
+resource "lxd_storage_pool" "main_pool" {
+  name   = "{{ config.storage_pool.name }}"
+  driver = "{{ config.storage_pool.driver }}"
+  
+  # Adding configuration settings for the storage pool
+  config = {
+    source = "{{ config.storage_pool.config.source }}"
+  }
+}
+
+# LXD Storage Volumes Configuration
+
+{%- set vm_all_volumes = dict() %}
+
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    
+    {%- set vm_config = vm_details.vm_configuration %}
+
+    {%- for vm_instance in range(vm_details.count) %}
+
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+
+      {%- if vm_all_volumes.update({vm_name: vm_all_volumes.get(vm_name, [])}) %}{% endif %}
+
+        {%- for volume_name, volume_config in vm_config['additional_volumes'].items() %}
+
+          {%- set vm_volume_name_full = vm_name ~ '-' ~ volume_name %}
+
+          {%- if vm_all_volumes[vm_name].append(vm_volume_name_full) %}{% endif %}
+
+resource "lxd_volume" "{{ vm_volume_name_full }}" {
+  pool = "{{ config.storage_pool.name }}"
+  name = "{{ vm_volume_name_full }}"
+
+  depends_on = [
+    lxd_storage_pool.main_pool
+  ]
+
+  {%- if volume_config.size is defined and config.storage_pool.driver != "dir" %}
+  size = "{{ volume_config.size }}"
+  type = "{{ volume_config.type }}"
+  {%- endif %}
+}
+        {%- endfor %}
+
+    {%- endfor %}
+
+  {%- endfor %}
+
+{%- endfor %}
+
+#debug vm_all_volumes: {{ vm_all_volumes | json_pretty_print | comment_multiline }}
+
+# Virtual Machine Configuration
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    {%- set vm_config = vm_details.vm_configuration %}
+    {%- for vm_instance in range(vm_details.count) %}
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+
+      {# vm_name: {{ vm_name }}
+      # vm_config: 
+      {{ vm_config | json_pretty_print | comment_multiline| indent(6) }} #}
+
+      resource "lxd_instance" "{{ vm_name }}" {
+        count    = 1
+        name     = "{{ vm_name }}"
+        image    = "{{ vm_config['image'] }}"
+        profiles = ["{{ vm_config['profiles'] | join('", "') }}"]
+        type     = "{{ vm_config['type'] | default('virtual-machine') }}"
+
+         depends_on = [
+
+          {%- for profile in vm_config['profiles'] %}
+            {%- if profile != 'default' %}
+          lxd_profile.{{ profile }},
+            {%- endif %}
+          {%- endfor %}
+                    {%- for volume_name in vm_all_volumes[vm_name] %}
+          lxd_volume.{{ volume_name }},
+          {%- endfor %}
+          lxd_storage_pool.main_pool
+        ]
+
+        {%- if vm_config.config | count > 0 or config.cloud_init_config is defined  or config.cloud_init_network_config is defined %}
+        config = {
+          {%- for key in vm_config.config.keys() %}
+          "{{ key }}" = "{{ vm_config.config[key] }}"
+          {%- endfor %}
+
+          {%- if config.cloud_init_config is defined %}
+          "user.user-data" = <<-EOF
+            {{ config.cloud_init_config | indent(12)}}
+          EOF
+          {%- endif %}
+          {%- if config.cloud_init_network_config is defined %}
+          "user.network-config" = <<-EOF
+            {{ config.cloud_init_network_config | indent(12)}}
+          EOF
+          {%- endif %}
+        }
+        {%- endif %}
+
+        limits = {
+          cpu    = {{ vm_config['cpus']   | default(1) }}
+          memory = "{{ vm_config['memory'] | default(1024) }}"
+        }
+
+        # Network device configuration
+        {%- for adapter_name, adapter in vm_config['network_adapters'].items() %}
+        device {
+          name       = "{{ adapter_name }}"
+          type       = "{{ adapter['type'] }}"
+          properties = {
+            nictype = "{{ adapter['nictype'] }}"
+            parent  = "{{ adapter['parent'] }}"
+          }
+        }
+        {%- endfor %}
+
+        # Additional volumes (disk devices)
+        {%- for volume_name, volume in vm_config['additional_volumes'].items() %}
+        device {
+          name       = "{{ volume_name }}"
+          type       = "disk"
+          properties = {
+            {%- if volume_name == 'root' %}
+            path   = "{{ volume['path'] }}"
+            pool   = "{{ config.storage_pool.name }}"
+            {%- else %}
+            source = "{{ vm_name }}-{{ volume_name }}"
+            path   = "{{ volume['path'] }}"
+            pool   = "{{ config.storage_pool.name }}"
+            {%- endif %}
+          }
+        }
+        {%- endfor %}
+      }
+    {%- endfor %}
+  {%- endfor %}
+{%- endfor %}
+
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    {%- set vm_config = vm_details.vm_configuration %}
+    {%- for vm_instance in range(vm_details.count) %}
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+
+output "{{ vm_name }}_ip" {
+  value = lxd_instance.{{ vm_name }}[0].ipv4_address
+}
+    {%- endfor %}
+  {%- endfor %}
+{%- endfor %}
+
+
+{%- set k8s_hosts = dict() %}
+
+{%- for vm_machine_set in config.virtual_machines_config.virtual_machines %}
+  {%- for vm_type, vm_details in vm_machine_set.items() %}
+    {%- set vm_config = vm_details.vm_configuration %}
+    {%- for vm_instance in range(vm_details.count) %}
+      {%- set vm_name = vm_details.prefix ~ '-' ~ ( vm_instance + 1 ) %}
+        {%- if k8s_hosts.update({vm_name: vm_details.role}) %}{% endif %}
+    {%- endfor %}
+  {%- endfor %}
+{%- endfor %}
+
+#debug k8s_hosts: {{ k8s_hosts | json_pretty_print | comment_multiline| indent(2) }}
+
+locals {
+  k8s_host_roles = {
+    {%- for k8s_host in k8s_hosts.keys() %}
+    "{{ k8s_host }}" = "{{ k8s_hosts[k8s_host] }}"{{ "," if not loop.last}}
+    {%- endfor %}
+  }
+}
+
+locals {
+  ip4etchosts = [
+    {%- for k8s_host in k8s_hosts.keys() %}
+    lxd_instance.{{ k8s_host }}[0].ipv4_address{{ "," if not loop.last}}
+    {%- endfor %}
+  ]
+}
+
+locals {
+  hostnames4etchosts = [
+    {%- for k8s_host in k8s_hosts.keys() %}
+    "{{ k8s_host }}"{{ "," if not loop.last}}
+    {%- endfor %}
+  ]
+}
+
+# Create a null_resource to track the availability of all hosts
+
+resource "null_resource" "check_hosts_availability" {
+  count = length(local.hostnames4etchosts)
+
+  triggers = {
+    always_run = "${timestamp()}"
+  }
+
+  # Use the remote-exec provisioner to execute a command on each host
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Host ${local.hostnames4etchosts[count.index]} is up'"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = "${var.deploy_user}"
+      host        = local.ip4etchosts[count.index]
+      private_key = file("${local_file.ssh_private_key.filename}")
+    }
+  }
+}
+
+resource "null_resource" "update_hosts" {
+  # Dependencies and triggers remain the same
+  depends_on = [null_resource.check_hosts_availability]
+  triggers = {
+    ip4etchosts = join(",", local.ip4etchosts)
+    hostnames4etchosts = join(",", local.hostnames4etchosts)
+  }
+
+  # Revised local-exec provisioner
+  provisioner "local-exec" {
+    command = <<EOT
+    for hostname in ${join(" ", local.hostnames4etchosts)}; do
+      sudo sed -i "/\\b$hostname\\b/d" /etc/hosts
+    done
+    echo '${join("\n", formatlist("%s %s", local.ip4etchosts, local.hostnames4etchosts))}' | sudo tee -a /etc/hosts
+    echo /etc/hosts updated
+    EOT
+  }
+}
+
+{# 
+resource "null_resource" "cleanup_hosts_entries" {
+  depends_on = [null_resource.update_hosts]
+
+  triggers = {
+    hostnames = join(" ", local.hostnames4etchosts)
+  }
+
+  provisioner "local-exec" {
+    when = destroy
+    command = <<EOT
+      for hostname in ${split(" ", self.triggers.hostnames)}; do
+        sudo sed -i "/\\b\$hostname\\b/d" /etc/hosts
+      done
+      echo /etc/hosts entries removed
+    EOT
+  }
+}
+#}
+
+{%- set k8s = config.kubernetes if config.kubernetes is defined and config.kubernetes | count > 0 else {} %}
+
+{%- if k8s is defined and k8s | count > 0  and k8s.global.enabled == true %}
+
+#debug k8s: {{ k8s | json_pretty_print | comment_multiline| indent(2) }}
+
+resource "k0s_cluster" "{{ k8s.k0s.name }}" {
+  name    = "{{ k8s.k0s.name }}"
+  version = "{{ k8s.k0s.version }}"
+  
+  {%- if k8s.k0s.config is defined %}
+  config = <<EOF
+    {{ k8s.k0s.config | pretty_format_yaml | indent(4)}}
+  EOF
+  {%- endif %}
+
+  hosts = [
+    {%- for k8s_host in k8s_hosts.keys() if k8s_hosts[k8s_host] in ['controller+worker', 'controller', 'worker'] %}
+      
+      {
+        role = "{{ k8s_hosts[k8s_host] }}"
+
+        ssh = {
+          address  = lxd_instance.{{ k8s_host }}[0].ipv4_address
+          port     = "${var.ssh_port}"
+          user     = "${var.deploy_user}"
+          private_key = file("${local_file.ssh_private_key.filename}")
+        }
+        {%- if k8s.k0s.install_flags is defined and k8s.k0s.install_flags | count > 0%}
+        install_flags = ["{{ k8s.k0s.install_flags }}"]
+        {%- endif%}
+        uploadBinary = true
+      }{{ "," if not loop.last}}
+    {%- endfor %}
+  ]
+}
+
+{%- endif %}
+
+output "kubernetes_cluster_name" {
+  value = k0s_cluster.{{ k8s.k0s.name }}.name
+}
+
+output "kubernetes_cluster_name_k0s_config" {
+  value = k0s_cluster.{{ k8s.k0s.name }}.config
+}

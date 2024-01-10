@@ -1,0 +1,211 @@
+cloud_init_config: |
+    #cloud-config
+    package_update: true
+    package_upgrade: true
+    packages:
+      - curl
+      - wget
+      - openssh-server
+      - net-tools
+      - bash-completion
+    ssh_authorized_keys:
+      - "${var.ssh_key}"
+    users:
+      - name: "${var.deploy_user}"
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        groups: users, admin, root
+        home: /home/kk573
+        shell: /bin/bash
+        lock_passwd: false
+        ssh-authorized-keys:
+          - "${var.ssh_key}"
+        ssh_pwauth: False
+
+#cloud_init_network_config: |
+#  version: 2
+#  ethernets:
+#    enp5s0:
+#      match:
+#        name: enp5s0
+#      set-name: eth-pri
+#      dhcp4: true
+#    enp5s1:
+#      match:
+#        name: enp5s1
+#      set-name: eth-sec
+#      dhcp4: true
+
+# Common network adapters for LXD containers
+network_adapters: &network_adapters
+  eth0:
+    nictype: bridged
+    parent: lxdbr0
+    type: nic
+
+# Common settings for all LXD containers
+common_lxd_settings: &common_lxd_settings
+  image: "ubuntu:mantic"
+  #image: "images:ubuntu/23.10"
+  type: "virtual-machine"
+  profiles:
+    - kubernetes_profile
+  config:
+    boot.autostart: "true"
+    user.access_network: "enp5s0"
+    user.access_interface: "enp5s0"
+
+# Define the storage pool information
+storage_pool: &storage_pool
+  name: "directory-pool"
+  driver: "dir"
+  config:
+    source: "/var/snap/lxd/common/lxd/storage-pools/directory-pool"
+    
+# Common settings for master node's storage volumes
+master_storage_settings: &master_storage
+  root:
+    size: "10GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/"
+  data:
+    size: "1GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/master_data"
+
+# Common settings for worker node's storage volumes
+worker_storage_settings: &worker_storage
+  root:
+    size: "10GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/"
+  data:
+    size: "1GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/worker_data"
+
+# LXC Profile Configuration
+lxc_profiles:
+  kubernetes_profile:
+    config: |
+      linux.kernel_modules: "ip_tables"
+      security.privileged: "true"
+
+# Unique VM Configurations
+master_vm_configuration: &master_vm_configuration
+  <<: *common_lxd_settings
+  network_adapters: *network_adapters
+  cpus: 1
+  memory: "1024MB"
+  additional_volumes: *master_storage
+
+worker_vm_configuration: &worker_vm_configuration
+  <<: *common_lxd_settings
+  network_adapters: *network_adapters
+  cpus: 1
+  memory: "2048MB"
+  additional_volumes: *worker_storage
+
+# Virtual Machines Configuration
+virtual_machines_config:
+  global:
+    required_provider: lxd
+    provider_info:
+      version: ">= 1.10.4"
+      source: "terraform-lxd/lxd"
+  virtual_machines:
+    - master:
+        count: 1
+        role: "controller"   #Role of the host. One of controller, controller+worker, single, worker, none.
+        prefix: "k8s-controller"
+        vm_configuration: *master_vm_configuration
+    - worker:
+        count: 1
+        role: "worker"        #Role of the host. One of controller, controller+worker, single, worker, none.
+        prefix: "k8s-worker"
+        vm_configuration: *worker_vm_configuration
+
+kubernetes:
+  global:
+    enabled: true
+    required_provider: k0s
+    provider_info:
+      source: "danielskowronski/k0s"
+      version: "0.2.2-rc1"
+  k0s:
+      version: "v1.28.4+k0s.0"
+      name: k0s-generated-cluster
+      install_flags: "--debug"
+      config:
+        apiVersion: k0s.k0sproject.io/v1beta1
+        kind: Cluster
+        metadata:
+          name: k0s-generated-cluster-inline
+        spec:
+          api:
+            k0sApiPort: 9443
+            port: 6443
+          installConfig:
+            users:
+              etcdUser: etcd
+              kineUser: kube-apiserver
+              konnectivityUser: konnectivity-server
+              kubeAPIserverUser: kube-apiserver
+              kubeSchedulerUser: kube-scheduler
+          konnectivity:
+            adminPort: 8133
+            agentPort: 8132
+          network:
+            nodeLocalLoadBalancing:
+              enabled: true
+              type: EnvoyProxy
+            kubeProxy:
+              disabled: false
+              mode: iptables
+            kuberouter:
+              autoMTU: true
+              mtu: 0
+              peerRouterASNs: ""
+              peerRouterIPs: ""
+            podCIDR: 10.244.0.0/16
+            provider: kuberouter
+            serviceCIDR: 10.96.0.0/12
+          podSecurityPolicy:
+            defaultPolicy: 00-k0s-privileged
+          storage:
+            type: etcd
+          telemetry:
+            enabled: false
+          extensions:
+            helm:
+              repositories:
+                - name: metallb
+                  url: https://metallb.github.io/metallb
+                - name: ingress-nginx
+                  url: https://kubernetes.github.io/ingress-nginx
+              charts:
+                - name: metallb
+                  chartname: metallb/metallb
+                  version: 0.13.12
+                  namespace: metallb
+                - name: ingress-nginx
+                  chartname: ingress-nginx/ingress-nginx
+                  version: 4.9.0
+                  namespace: ingress-nginx
+                  values: |
+                    controller:
+                      image:
+                        registry: registry.k8s.io
+                        image: ingress-nginx/controller
+                        tag: "v1.9.5"
+                        digest: sha256:b3aba22b1da80e7acfc52b115cae1d4c687172cbf2b742d5b502419c25ff340e
+                      resources:
+                        limits:
+                          cpu: 100m
+                          memory: 90Mi
+                        requests:
+                          cpu: 100m
+                          memory: 90Mi
