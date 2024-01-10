@@ -9,8 +9,42 @@ terraform {
       source  = "{{ config.kubernetes.global.provider_info.source | default('>= 0.2.2-rc1') }}"
       version = "{{ config.kubernetes.global.provider_info.version | default('danielskowronski/k0s') }}"
     }
+    random = {
+      source = "hashicorp/random"
+      version = ">= 3.6.0"
+    }
   }
 }
+
+#Creating temporary file to store the SSH private key
+
+resource "random_string" "ssh_private_key_temp" {
+  length  = 8  # Length of the random string
+  special = false
+  upper   = false
+  keepers = {
+    # This will ensure the random string is generated only when `keepers` value changes
+    "always_run" = "1"
+  }
+}
+
+# Creating a temporary file to store the SSH private key
+resource "local_file" "ssh_private_key" {
+  content  = var.ssh_key_private
+  filename = "${path.module}/temp_ssh_key_${random_string.ssh_private_key_temp.result}"
+  file_permission = "0600"
+}
+
+# Using null_resource to potentially perform other actions if needed
+resource "null_resource" "update_env" {
+  # This will only run if the dependencies (e.g., local_file.ssh_private_key) change
+  depends_on = [local_file.ssh_private_key]
+}
+
+output "ssh_key_private_path" {
+  value = local_file.ssh_private_key.filename
+}
+
 
 # LXD Profile Configuration
 {%- if config.lxc_profiles is defined and config.lxc_profiles | count > 0 %}
@@ -123,7 +157,7 @@ resource "lxd_volume" "{{ vm_volume_name_full }}" {
           lxd_storage_pool.main_pool
         ]
 
-        {%- if vm_config.config | count > 0 or config.cloud_init_config is defined %}
+        {%- if vm_config.config | count > 0 or config.cloud_init_config is defined  or config.cloud_init_network_config is defined %}
         config = {
           {%- for key in vm_config.config.keys() %}
           "{{ key }}" = "{{ vm_config.config[key] }}"
@@ -132,6 +166,11 @@ resource "lxd_volume" "{{ vm_volume_name_full }}" {
           {%- if config.cloud_init_config is defined %}
           "user.user-data" = <<-EOF
             {{ config.cloud_init_config | indent(12)}}
+          EOF
+          {%- endif %}
+          {%- if config.cloud_init_network_config is defined %}
+          "user.network-config" = <<-EOF
+            {{ config.cloud_init_network_config | indent(12)}}
           EOF
           {%- endif %}
         }
@@ -228,34 +267,73 @@ locals {
   ]
 }
 
-resource "null_resource" "update_hosts" {
-  count = length(local.hostnames4etchosts) {# Assuming hostnames4etchosts is a list of server IP addresses #}
+# Create a null_resource to track the availability of all hosts
 
-  # Execute remote command to update /etc/hosts
+resource "null_resource" "check_hosts_availability" {
+  count = length(local.hostnames4etchosts)
+
+  triggers = {
+    always_run = "${timestamp()}"
+  }
+
+  # Use the remote-exec provisioner to execute a command on each host
   provisioner "remote-exec" {
     inline = [
-      "echo '${join("\n", formatlist("%s %s", local.ip4etchosts, local.hostnames4etchosts))}' | sudo tee -a /etc/hosts"
+      "echo 'Host ${local.hostnames4etchosts[count.index]} is up'"
     ]
 
     connection {
-      type     = "ssh"
-      user     = "${var.deploy_user} "
-      host     = local.ip4etchosts[count.index]
-      private_key = file("~/.ssh/id_rsa")
+      type        = "ssh"
+      user        = "${var.deploy_user}"
+      host        = local.ip4etchosts[count.index]
+      private_key = file("${local_file.ssh_private_key.filename}")
     }
-  }
-
-  provisioner "local-exec" {
-    command = "echo '${join("\n", formatlist("%s %s", local.ip4etchosts, local.hostnames4etchosts))}' | sudo tee -a /etc/hosts"
-  }
-
-  # Trigger to recreate the resource when IP addresses or hostnames change
-  triggers = {
-    always_run = "${join(",", local.ip4etchosts)}:${join(",", local.hostnames4etchosts)}"
   }
 }
 
-{%- set k8s = config.kubernetes %}
+resource "null_resource" "update_hosts" {
+  # Dependencies and triggers remain the same
+  depends_on = [null_resource.check_hosts_availability]
+  triggers = {
+    ip4etchosts = join(",", local.ip4etchosts)
+    hostnames4etchosts = join(",", local.hostnames4etchosts)
+  }
+
+  # Revised local-exec provisioner
+  provisioner "local-exec" {
+    command = <<EOT
+    for hostname in ${join(" ", local.hostnames4etchosts)}; do
+      sudo sed -i "/\\b$hostname\\b/d" /etc/hosts
+    done
+    echo '${join("\n", formatlist("%s %s", local.ip4etchosts, local.hostnames4etchosts))}' | sudo tee -a /etc/hosts
+    echo /etc/hosts updated
+    EOT
+  }
+}
+
+{# 
+resource "null_resource" "cleanup_hosts_entries" {
+  depends_on = [null_resource.update_hosts]
+
+  triggers = {
+    hostnames = join(" ", local.hostnames4etchosts)
+  }
+
+  provisioner "local-exec" {
+    when = destroy
+    command = <<EOT
+      for hostname in ${split(" ", self.triggers.hostnames)}; do
+        sudo sed -i "/\\b\$hostname\\b/d" /etc/hosts
+      done
+      echo /etc/hosts entries removed
+    EOT
+  }
+}
+#}
+
+{%- set k8s = config.kubernetes if config.kubernetes is defined and config.kubernetes | count > 0 else {} %}
+
+{%- if k8s is defined and k8s | count > 0  and k8s.global.enabled == true %}
 
 #debug k8s: {{ k8s | json_pretty_print | comment_multiline| indent(2) }}
 
@@ -270,7 +348,8 @@ resource "k0s_cluster" "{{ k8s.k0s.name }}" {
   {%- endif %}
 
   hosts = [
-    {%- for k8s_host in k8s_hosts.keys() %}
+    {%- for k8s_host in k8s_hosts.keys() if k8s_hosts[k8s_host] in ['controller+worker', 'controller', 'worker'] %}
+      
       {
         role = "{{ k8s_hosts[k8s_host] }}"
 
@@ -278,11 +357,23 @@ resource "k0s_cluster" "{{ k8s.k0s.name }}" {
           address  = lxd_instance.{{ k8s_host }}[0].ipv4_address
           port     = "${var.ssh_port}"
           user     = "${var.deploy_user}"
+          private_key = file("${local_file.ssh_private_key.filename}")
         }
+        {%- if k8s.k0s.install_flags is defined and k8s.k0s.install_flags | count > 0%}
+        install_flags = ["{{ k8s.k0s.install_flags }}"]
+        {%- endif%}
         uploadBinary = true
       }{{ "," if not loop.last}}
     {%- endfor %}
   ]
-  
+}
 
+{%- endif %}
+
+output "kubernetes_cluster_name" {
+  value = k0s_cluster.{{ k8s.k0s.name }}.name
+}
+
+output "kubernetes_cluster_name_k0s_config" {
+  value = k0s_cluster.{{ k8s.k0s.name }}.config
 }
