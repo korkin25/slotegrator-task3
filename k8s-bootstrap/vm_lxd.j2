@@ -13,6 +13,10 @@ terraform {
       source = "hashicorp/random"
       version = ">= 3.6.0"
     }
+    ansible = {
+      source = "jdziat/ansible"
+      version = "1.2.1"
+    }
   }
 }
 
@@ -260,6 +264,14 @@ locals {
 }
 
 locals {
+  host_addresses = {
+    {%- for k8s_host in k8s_hosts.keys() %}
+    {{ k8s_host }} = lxd_instance.{{ k8s_host }}[0].ipv4_address
+    {%- endfor %}
+  }
+}
+
+locals {
   hostnames4etchosts = [
     {%- for k8s_host in k8s_hosts.keys() %}
     "{{ k8s_host }}"{{ "," if not loop.last}}
@@ -331,11 +343,72 @@ resource "null_resource" "cleanup_hosts_entries" {
 }
 #}
 
+{%- for host, role in k8s_hosts.items() %}
+  {%- if role == "nfs-server" %}
+resource "null_resource" "install_nfs_server_on_{{ host }}" {
+
+  triggers = {
+    exports = "/nfs_data *(rw,no_root_squash,anonuid=0,anongid=0,no_subtree_check,fsid=0)"
+  }
+  provisioner "remote-exec" {
+    connection {
+      type        = "ssh"
+      user        = var.deploy_user
+      host        = lxd_instance.{{ host }}[0].ipv4_address
+      private_key = file(local_file.ssh_private_key.filename)
+    }
+
+    inline = [
+      "sudo apt-get install -y nfs-kernel-server",
+      "echo '${self.triggers.exports}' | sudo tee /etc/exports",
+      "sudo exportfs -ra",
+      "sudo systemctl restart nfs-kernel-server"
+    ]
+  }
+}
+  {%- endif %}
+{%- endfor %}
+
+{%- for host, role in k8s_hosts.items() %}
+  {%- if role in ["worker","controller+worker"] %}
+resource "null_resource" "install_nfs_client_on_{{ host }}" {
+  provisioner "remote-exec" {
+    connection {
+      type        = "ssh"
+      user        = "${var.deploy_user}"
+      host        = lxd_instance.{{ host }}[0].ipv4_address
+      private_key = file("${local_file.ssh_private_key.filename}")
+    }
+
+    inline = [
+      "sudo apt-get install -y nfs-common"
+    ]
+  }
+}
+  {%- endif %}
+{%- endfor %}
+
+{# {% for host, role in k8s_hosts.items() %}
+{% if role == "nfs-server" %}
+resource "ansible_playbook" "setup_nfs_server_{{ host }}" {
+  playbook   = "playbook.yml"
+  name       = "host-1.example.com"
+  replayable = true
+
+  extra_vars = {
+    var_a = "Some variable"
+    var_b = "Another variable"
+  }
+}
+{% endif %}
+{% endfor %}
+#}
+
 {%- set k8s = config.kubernetes if config.kubernetes is defined and config.kubernetes | count > 0 else {} %}
 
 {%- if k8s is defined and k8s | count > 0  and k8s.global.enabled == true %}
 
-#debug k8s: {{ k8s | json_pretty_print | comment_multiline| indent(2) }}
+#debug k8s: {{ k8s | json_pretty_print | comment_multiline| indent(2)}}
 
 resource "k0s_cluster" "{{ k8s.k0s.name }}" {
   name    = "{{ k8s.k0s.name }}"
@@ -359,16 +432,41 @@ resource "k0s_cluster" "{{ k8s.k0s.name }}" {
           user     = "${var.deploy_user}"
           private_key = file("${local_file.ssh_private_key.filename}")
         }
-        {%- if k8s.k0s.install_flags is defined and k8s.k0s.install_flags | count > 0%}
-        install_flags = ["{{ k8s.k0s.install_flags }}"]
-        {%- endif%}
+
+        {%- set host_options = ["install_flags","private_interface"] %}
+        
+        {%- for host_option in host_options %}
+
+          #debug {{ host_option }}: {{ k8s.k0s[host_option] | json_pretty_print | comment_multiline| indent(2)}}
+          {%- if k8s.k0s[host_option] is defined %}
+            {%- set value = k8s.k0s[host_option] %}
+            {%- if value is string %}
+              {{ host_option }} = "{{ value }}"
+            {%- elif value is iterable and value is not string %}
+              {{ host_option }} = [
+                {%- for item in value %}
+                  "{{ item }}"{{ ',' if not loop.last }}
+                {%- endfor %}
+              ]
+            {%- elif value is mapping %}
+              {{ host_option }} = {
+                {%- for key, val in value.items() %}
+                  "{{ key }}": "{{ val }}"{{ ',' if not loop.last }}
+                {%- endfor %}
+              }
+            {%- else %}
+              {{ host_option }} = "{{ value }}"
+            {%- endif %}
+
+          {%- endif %}
+
+        {%- endfor %}
+
         uploadBinary = true
       }{{ "," if not loop.last}}
     {%- endfor %}
   ]
 }
-
-{%- endif %}
 
 output "kubernetes_cluster_name" {
   value = k0s_cluster.{{ k8s.k0s.name }}.name
@@ -377,3 +475,5 @@ output "kubernetes_cluster_name" {
 output "kubernetes_cluster_name_k0s_config" {
   value = k0s_cluster.{{ k8s.k0s.name }}.config
 }
+
+{%- endif %}
