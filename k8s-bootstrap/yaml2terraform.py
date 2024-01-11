@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import yaml
 import json
+import re
 from jinja2 import Environment, FileSystemLoader
 from collections.abc import Iterable, Hashable
 
@@ -22,7 +23,13 @@ def generate_terraform_file(config, template_env, output_file='main.tf'):
             data = input_data
 
         try:
-            return yaml.dump(data, default_flow_style=False, sort_keys=False, indent=2, allow_unicode=True)
+            formatted_yaml = yaml.dump(data, default_flow_style=False, sort_keys=False, indent=2, allow_unicode=True)
+
+            # Replace \" with " only within ${...}
+            def replace_quotes(match):
+                return match.group(0).replace(r'\"', '"')
+
+            return re.sub(r'\$\{[^}]*\}', replace_quotes, formatted_yaml)
         except Exception as e:
             raise ValueError(f"Error formatting YAML: {e}")
 
