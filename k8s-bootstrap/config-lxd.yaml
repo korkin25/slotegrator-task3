@@ -8,6 +8,7 @@ cloud_init_config: |
       - openssh-server
       - net-tools
       - bash-completion
+
     ssh_authorized_keys:
       - "${var.ssh_key}"
     users:
@@ -87,6 +88,19 @@ worker_storage_settings: &worker_storage
     pool: *storage_pool
     path: "/worker_data"
 
+# Common settings for worker node's storage volumes
+nfs_storage_settings: &nfs_storage
+  root:
+    size: "10GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/"
+  nfs:
+    size: "1GB"
+    type: "block"
+    pool: *storage_pool
+    path: "/nfs_data"
+
 # LXC Profile Configuration
 lxc_profiles:
   kubernetes_profile:
@@ -109,6 +123,13 @@ worker_vm_configuration: &worker_vm_configuration
   memory: "2048MB"
   additional_volumes: *worker_storage
 
+nfs_vm_configuration: &nfs_vm_configuration
+  <<: *common_lxd_settings
+  network_adapters: *network_adapters
+  cpus: 1
+  memory: "512MB"
+  additional_volumes: *nfs_storage
+
 # Virtual Machines Configuration
 virtual_machines_config:
   global:
@@ -127,6 +148,11 @@ virtual_machines_config:
         role: "worker"        #Role of the host. One of controller, controller+worker, single, worker, none.
         prefix: "k8s-worker"
         vm_configuration: *worker_vm_configuration
+    - nfs-server:
+        count: 1
+        role: "nfs-server"        #Role of the host. One of controller, controller+worker, single, worker, none.
+        prefix: "nfs-server"
+        vm_configuration: *nfs_vm_configuration
 
 kubernetes:
   global:
@@ -138,7 +164,9 @@ kubernetes:
   k0s:
       version: "v1.28.4+k0s.0"
       name: k0s-generated-cluster
-      install_flags: "--debug"
+      install_flags:
+        - --debug
+      private_interface: "enp5s0"
       config:
         apiVersion: k0s.k0sproject.io/v1beta1
         kind: Cluster
@@ -186,6 +214,10 @@ kubernetes:
                   url: https://metallb.github.io/metallb
                 - name: ingress-nginx
                   url: https://kubernetes.github.io/ingress-nginx
+                - name: nfs-subdir-external-provisioner
+                  url: https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+                - name: kubernetes-dashboard
+                  url: https://kubernetes.github.io/dashboard/
               charts:
                 - name: metallb
                   chartname: metallb/metallb
@@ -209,3 +241,65 @@ kubernetes:
                         requests:
                           cpu: 100m
                           memory: 90Mi
+                - name: nfs-subdir-external-provisioner
+                  chartname: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+                  version: 4.0.18
+                  namespace: nfs-subdir-external-provisioner
+                  values: |
+                    storageClass:
+                      name: nfs-client
+                      defaultClass: true
+                    nfs:
+                      server: ${local.host_addresses["nfs-server-1"]}
+                      path: /nfs_data
+                - name: kubernetes-dashboard
+                  chartname: kubernetes-dashboard/kubernetes-dashboard
+                  namespace: kubernetes-dashboard
+                  version: 6.0.8
+                  values: |
+                    app:
+                      ingress:
+                        enabled: true
+                    api:
+                      role: api
+                      image:
+                        repository: docker.io/kubernetesui/dashboard-api
+                        tag: v1.0.0
+                      containers:
+                        ports:
+                          - name: api
+                            containerPort: 9000
+                            protocol: TCP
+                        resources:
+                          requests:
+                            cpu: 100m
+                            memory: 200Mi
+                          limits:
+                            cpu: 250m
+                            memory: 400Mi
+                    web:
+                      role: web
+
+                    metricsScraper:
+                      enabled: true
+                    metrics-server:
+                      enabled: true
+                      args:
+                        - --kubelet-preferred-address-types=InternalIP
+                        - --kubelet-insecure-tls
+
+                    ## Optional Cert Manager sub-chart configuration
+                    ## Enable this if you don't already have cert-manager enabled on your cluster.
+                    cert-manager:
+                      enabled: false
+                      installCRDs: false
+
+                    extras:
+                      # Extra Kubernetes manifests to be deployed
+                      # manifests:
+                      # - apiVersion: v1
+                      #   kind: ConfigMap
+                      #   metadata:
+                      #     name: additional-configmap
+                      #   data:
+                      #     mykey: myvalue
